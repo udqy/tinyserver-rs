@@ -15,15 +15,13 @@ impl ThreadPool {
         assert!(size > 0);
 
         let (sender, receiver) = mpsc::channel();
-
         let receiver = Arc::new(Mutex::new(receiver));
 
         let mut workers = Vec::with_capacity(size);
-
         for id in 0..size {
             workers.push(Worker::new(id, Arc::clone(&receiver)));
         }
-        
+
         ThreadPool {
             workers,
             sender: Some(sender),
@@ -35,8 +33,9 @@ impl ThreadPool {
         F: FnOnce() + Send + 'static,
     {
         let job = Box::new(f);
-
-        self.sender.as_ref().unwrap().send(job).unwrap();
+        if let Err(e) = self.sender.as_ref().unwrap().send(job) {
+            eprintln!("Failed to send job to worker: {}", e);
+        }
     }
 }
 
@@ -48,13 +47,22 @@ struct Worker {
 impl Worker {
     fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Worker {
         let thread = thread::spawn(move || loop {
-            let message = receiver.lock().unwrap().recv();
+            let guard = match receiver.lock() {
+                Ok(guard) => guard,
+                Err(e) => {
+                    eprintln!("Worker {id} failed to acquire lock: {}", e);
+                    break;
+                }
+            };
 
-            match message {
+            // Attempt to receive a job
+            match guard.recv() {
                 Ok(job) => {
                     println!("Worker {id} got a job; executing.");
-
-                    job();
+                    // Catch any panics during job execution
+                    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job())) {
+                        eprintln!("Worker {id} encountered a panic: {:?}", e);
+                    }
                 }
                 Err(_) => {
                     println!("Worker {id} disconnected; shutting down.");
@@ -76,9 +84,10 @@ impl Drop for ThreadPool {
 
         for worker in &mut self.workers {
             println!("Shutting down worker {}", worker.id);
-
             if let Some(thread) = worker.thread.take() {
-                thread.join().unwrap();
+                if let Err(e) = thread.join() {
+                    eprintln!("Worker {} failed to shut down cleanly: {:?}", worker.id, e);
+                }
             }
         }
     }
