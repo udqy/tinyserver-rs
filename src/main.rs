@@ -6,10 +6,12 @@ use std::{
 };
 
 fn main() {
-    let listener = TcpListener::bind("127.0.0.1:7878").unwrap_or_else(|e| {
+    let listener = TcpListener::bind("127.0.0.1:8420").unwrap_or_else(|e| {
         eprintln!("Cannot bind to the given address: {}", e);
         std::process::exit(1);
     });
+
+    println!("Server started at: http://localhost:8420/");
 
     let pool = ThreadPool::new(4);
 
